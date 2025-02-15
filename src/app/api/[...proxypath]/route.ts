@@ -1,147 +1,126 @@
+import { Hono } from "hono";
+import { handle } from "hono/vercel";
 import { getServerSession } from "@/lib/session";
-import { NextRequest, NextResponse } from "next/server";
+import { HTTPException } from "hono/http-exception";
+import { cors } from "hono/cors";
+import { logger } from "hono/logger";
+import { timing } from "hono/timing";
+import { compress } from "hono/compress";
+import { secureHeaders } from "hono/secure-headers";
+import { cache } from "hono/cache";
 
 const PROXY_BASE_URL = "https://dummyjson.com";
 
-export async function GET(
-  request: NextRequest,
-  { params }: { params: Promise<{ proxypath: string[] }> },
-) {
-  try {
-    const proxypath = (await params).proxypath;
-    const path = proxypath.join("/");
-    const url = `${PROXY_BASE_URL}/${path}`;
-    const session = await getServerSession();
-    if (session) {
-      const accessToken = session.accessToken;
-      const refreshToken = session.refreshToken;
+const app = new Hono();
 
-      if (accessToken) {
-        request.headers.set("Authorization", `Bearer ${accessToken}`);
-      }
+// Security headers middleware
+app.use(
+  "*",
+  secureHeaders({
+    strictTransportSecurity: "max-age=31536000; includeSubDomains",
+    xFrameOptions: "DENY",
+    xContentTypeOptions: "nosniff",
+    referrerPolicy: "strict-origin-when-cross-origin",
+  }),
+);
 
-      if (refreshToken) {
-        request.headers.set("Refresh-Token", refreshToken);
-      }
+// Cache control middleware
+app.use(
+  "*",
+  cache({
+    cacheName: "proxy-cache",
+    cacheControl: "public, max-age=60, stale-while-revalidate=300",
+  }),
+);
+
+// Logger middleware for request/response logging
+app.use("*", logger());
+
+// CORS middleware
+app.use(
+  "*",
+  cors({
+    origin: "*", // In production, replace with specific origins
+    allowMethods: ["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"],
+    allowHeaders: ["Content-Type", "Authorization", "Refresh-Token"],
+    exposeHeaders: ["X-Response-Time"],
+    maxAge: 600,
+    credentials: true,
+  }),
+);
+
+// Timing middleware to track response times
+app.use("*", timing());
+
+// Compression middleware for response payload
+app.use("*", compress());
+
+// Middleware to inject auth headers from session
+app.use("*", async (c, next) => {
+  const session = await getServerSession();
+  if (session) {
+    const { accessToken, refreshToken } = session;
+    if (accessToken) {
+      c.req.raw.headers.set("Authorization", `Bearer ${accessToken}`);
     }
-
-    const response = await fetch(url, {
-      headers: request.headers,
-    });
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error(`Proxy GET error:`, error);
-    return NextResponse.json(
-      { error: "Failed to fetch data" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function POST(
-  request: NextRequest,
-  { params }: { params: Promise<{ proxypath: string[] }> },
-) {
-  try {
-    const proxypath = (await params).proxypath;
-    const path = proxypath.join("/");
-    const url = `${PROXY_BASE_URL}/${path}`;
-    const session = await getServerSession();
-    if (session) {
-      const accessToken = session.accessToken;
-      const refreshToken = session.refreshToken;
-
-      if (accessToken) {
-        request.headers.set("Authorization", `Bearer ${accessToken}`);
-      }
-
-      if (refreshToken) {
-        request.headers.set("Refresh-Token", refreshToken);
-      }
+    if (refreshToken) {
+      c.req.raw.headers.set("Refresh-Token", refreshToken);
     }
-    const response = await fetch(url, {
-      method: "POST",
-      headers: request.headers,
-      body: request.body,
-    });
-    const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error(`Proxy POST error:`, error);
-    return NextResponse.json({ error: "Failed to post data" }, { status: 500 });
   }
-}
+  await next();
+});
 
-export async function PUT(
-  request: NextRequest,
-  { params }: { params: Promise<{ proxypath: string[] }> },
-) {
+// Error handling and logging middleware
+app.use("*", async (c, next) => {
   try {
-    const proxypath = (await params).proxypath;
-    const path = proxypath.join("/");
-    const url = `${PROXY_BASE_URL}/${path}`;
-    const session = await getServerSession();
-    if (session) {
-      const accessToken = session.accessToken;
-      const refreshToken = session.refreshToken;
-
-      if (accessToken) {
-        request.headers.set("Authorization", `Bearer ${accessToken}`);
-      }
-
-      if (refreshToken) {
-        request.headers.set("Refresh-Token", refreshToken);
-      }
-    }
-    const response = await fetch(url, {
-      method: "PUT",
-      headers: request.headers,
-      body: request.body,
-    });
-    const data = await response.json();
-    return NextResponse.json(data);
+    await next();
   } catch (error) {
-    console.error(`Proxy PUT error:`, error);
-    return NextResponse.json(
-      { error: "Failed to update data" },
-      { status: 500 },
-    );
+    if (error instanceof HTTPException) {
+      return c.json({ error: error.message }, error.status);
+    }
+    console.error("Proxy error:", {
+      error,
+      method: c.req.method,
+      path: c.req.path,
+      query: Object.fromEntries(new URL(c.req.url).searchParams),
+      timestamp: new Date().toISOString(),
+    });
+    return c.json({ error: "Internal server error" }, 500);
   }
-}
+});
 
-export async function DELETE(
-  request: NextRequest,
-  { params }: { params: Promise<{ proxypath: string[] }> },
-) {
+// Generic handler for all HTTP methods
+app.all("*", async (c) => {
+  const url = new URL(c.req.url);
+  const proxyPath = url.pathname.replace("/api/", "");
+  const targetUrl = `${PROXY_BASE_URL}/${proxyPath}`;
+
+  c.res.headers.set("X-Proxy-Path", proxyPath);
+
   try {
-    const proxypath = (await params).proxypath;
-    const path = proxypath.join("/");
-    const url = `${PROXY_BASE_URL}/${path}`;
-    const session = await getServerSession();
-    if (session) {
-      const accessToken = session.accessToken;
-      const refreshToken = session.refreshToken;
-
-      if (accessToken) {
-        request.headers.set("Authorization", `Bearer ${accessToken}`);
-      }
-
-      if (refreshToken) {
-        request.headers.set("Refresh-Token", refreshToken);
-      }
-    }
-    const response = await fetch(url, {
-      method: "DELETE",
-      headers: request.headers,
+    console.log(`Proxying ${c.req.method} request to: ${targetUrl}`);
+    const response = await fetch(targetUrl, {
+      method: c.req.method,
+      headers: c.req.raw.headers,
+      body: ["GET", "HEAD"].includes(c.req.method) ? undefined : c.req.raw.body,
     });
+
     const data = await response.json();
-    return NextResponse.json(data);
-  } catch (error) {
-    console.error(`Proxy DELETE error:`, error);
-    return NextResponse.json(
-      { error: "Failed to delete data" },
-      { status: 500 },
-    );
+    const status = response.status as 200 | 201 | 400 | 401 | 403 | 404 | 500;
+    c.res.headers.set("X-Proxy-Status", status.toString());
+
+    return c.json(data, { status });
+  } catch {
+    throw new HTTPException(500, {
+      message: `Failed to ${c.req.method.toLowerCase()} data`,
+    });
   }
-}
+});
+
+export const GET = handle(app);
+export const POST = handle(app);
+export const PUT = handle(app);
+export const DELETE = handle(app);
+export const PATCH = handle(app);
+export const HEAD = handle(app);
+export const OPTIONS = handle(app);
