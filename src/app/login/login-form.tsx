@@ -28,11 +28,8 @@ export default function LoginForm() {
 
     try {
       await api.post("/api/auth/login", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ username, password }),
+        username,
+        password,
       });
 
       // Redirect to original URL or profile page on success
@@ -40,7 +37,6 @@ export default function LoginForm() {
     } catch (err) {
       // Show error and redirect to home page on authentication failure
       setError(err instanceof Error ? err.message : "An error occurred");
-      setTimeout(() => router.push("/"), 2000); // Redirect after showing error briefly
     } finally {
       setLoading(false);
     }

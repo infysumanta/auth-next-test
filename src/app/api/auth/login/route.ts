@@ -27,8 +27,6 @@ export async function POST(request: NextRequest) {
       expiresInMins: 30,
     });
 
-    console.log(data);
-
     // Update session data
     await updateSession({
       isLoggedIn: true,
