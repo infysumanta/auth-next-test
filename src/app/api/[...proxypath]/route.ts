@@ -1,13 +1,16 @@
 import { Hono } from "hono";
 import { handle } from "hono/vercel";
-import { getServerSession } from "@/lib/session";
 import { HTTPException } from "hono/http-exception";
+
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { timing } from "hono/timing";
 import { compress } from "hono/compress";
 import { secureHeaders } from "hono/secure-headers";
 import { cache } from "hono/cache";
+
+import { getUserSession, handleLogin, handleLogout } from "./_handler/auth";
+import { sessionMiddleware } from "./_middleware/session";
 
 const PROXY_BASE_URL = "https://dummyjson.com";
 
@@ -56,19 +59,7 @@ app.use("*", timing());
 app.use("*", compress());
 
 // Middleware to inject auth headers from session
-app.use("*", async (c, next) => {
-  const session = await getServerSession();
-  if (session) {
-    const { accessToken, refreshToken } = session;
-    if (accessToken) {
-      c.req.raw.headers.set("Authorization", `Bearer ${accessToken}`);
-    }
-    if (refreshToken) {
-      c.req.raw.headers.set("Refresh-Token", refreshToken);
-    }
-  }
-  await next();
-});
+app.use("*", sessionMiddleware);
 
 // Error handling and logging middleware
 app.use("*", async (c, next) => {
@@ -89,7 +80,12 @@ app.use("*", async (c, next) => {
   }
 });
 
-// Generic handler for all HTTP methods
+// Auth routes
+app.post("/api/auth/login", handleLogin);
+app.post("/api/auth/logout", handleLogout);
+app.get("/api/auth/session", getUserSession);
+
+// Generic handler for all other routes
 app.all("*", async (c) => {
   const url = new URL(c.req.url);
   const proxyPath = url.pathname.replace("/api/", "");
