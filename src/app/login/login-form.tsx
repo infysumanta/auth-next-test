@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import api from "@/lib/api";
 
 export default function LoginForm() {
   const router = useRouter();
@@ -26,19 +27,13 @@ export default function LoginForm() {
     const password = "emilyspass";
 
     try {
-      const response = await fetch("/api/auth/login", {
+      await api.post("/api/auth/login", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({ username, password }),
       });
-
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Failed to login");
-      }
 
       // Redirect to original URL or profile page on success
       router.push(redirectTo);
