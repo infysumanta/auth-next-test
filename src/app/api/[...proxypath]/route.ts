@@ -11,8 +11,9 @@ import { cache } from "hono/cache";
 
 import { getUserSession, handleLogin, handleLogout } from "./_handler/auth";
 import { sessionMiddleware } from "./_middleware/session";
+import { env } from "process";
 
-const PROXY_BASE_URL = "https://dummyjson.com";
+const PROXY_BASE_URL = env.NEXT_PUBLIC_API_URL;
 
 const app = new Hono();
 
